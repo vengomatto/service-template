@@ -99,7 +99,7 @@ jobs:
             echo
             echo "\`deploy/service.yaml\` was committed to ${WHERE}."
             echo
-            echo "Two steps remain. The workflow cannot do them: it has no right to change repository settings or to open a pull request in another repository."
+            echo "Three steps remain. The workflow cannot do the first and the last: it has no right to change repository settings or to open a pull request in another repository."
             echo
             echo "### 1. Repository settings (run once, with the GitHub CLI)"
             echo
@@ -110,9 +110,13 @@ jobs:
             echo
             echo "These let the deploy workflow open and merge its release pull request. Without them the first release stops with a clear message."
             echo
-            echo "### 2. Register the service with the platform"
+            echo "### 2. Push your application"
             echo
-            echo "Add this entry to the \`services\` list in \`argocd/apps/services-appset.yaml\` of the platform repository and open a pull request:"
+            echo "Add your code and a \`Dockerfile\` at the repository root, and push to \`main\`. The deploy workflow builds, verifies and releases it. Wait for the first release before step 3."
+            echo
+            echo "### 3. Register the service with the platform"
+            echo
+            echo "Do this after the first release: registered earlier, the platform would wait for an image that does not exist yet. Add this entry to the list of services (\`spec.generators[].list.elements\`) in \`argocd/apps/services-appset.yaml\` of the platform repository and open a pull request:"
             echo
             echo '```yaml'
             echo "- name: ${NAME}"
@@ -120,8 +124,4 @@ jobs:
             echo "  revision: main"
             echo "  valuesPath: deploy/service.yaml"
             echo '```'
-            echo
-            echo "### Then push your application"
-            echo
-            echo "Add your code and a \`Dockerfile\` at the repository root, and push to \`main\`. The deploy workflow builds, verifies and releases it."
           } >> "$GITHUB_STEP_SUMMARY"
