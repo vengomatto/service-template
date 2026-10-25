@@ -26,6 +26,7 @@ jobs:
     if: ${{ !github.event.repository.is_template }}
     runs-on: ubuntu-latest
     outputs:
+      ready: ${{ steps.plan.outputs.ready }}
       components: ${{ steps.plan.outputs.components }}
     steps:
       - uses: actions/checkout@v4
@@ -33,10 +34,15 @@ jobs:
         name: Read the components from deploy/service.yaml
         run: |
           set -euo pipefail
+          # A new repository has no deploy/service.yaml until Setup service has run. That is not a
+          # failure: say what to do and skip the rest, so a fresh repository does not start red.
           if [ ! -f deploy/service.yaml ]; then
-            echo "::error::deploy/service.yaml is missing. Run the 'Setup service' workflow first."
-            exit 1
+            echo "::notice::deploy/service.yaml is missing. Run the 'Setup service' workflow, then push again."
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            echo "components=[]" >> "$GITHUB_OUTPUT"
+            exit 0
           fi
+          echo "ready=true" >> "$GITHUB_OUTPUT"
           count=$(yq '.components | length' deploy/service.yaml)
           # One component: Dockerfile and build context at the repository root.
           # Several: <component>/Dockerfile with the context in <component>/.
@@ -46,7 +52,10 @@ jobs:
           echo "Components: ${matrix}"
 
   test:
-    if: ${{ !github.event.repository.is_template }}
+    # Skipped (not failed) while there is no deploy/service.yaml, and in the template itself.
+    # build and deploy need this job, so they are skipped too.
+    needs: plan
+    if: ${{ needs.plan.outputs.ready == 'true' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

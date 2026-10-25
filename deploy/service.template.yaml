@@ -1,5 +1,4 @@
-# Replaced by the Setup service workflow, which writes deploy/service.yaml and removes this file.
-# This is the only deployment file a team writes. The platform turns it into the namespace, the
+# The only deployment file this service needs. The platform turns it into the namespace, the
 # network rules, the deployments, the ingress, the database and the smoke test.
 #
 # `tag` is the commit SHA of the image CI built; CI rewrites it in a deploy PR. Never edit it by hand.
