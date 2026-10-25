@@ -89,98 +89,39 @@ jobs:
             echo "where=the branch setup-service (open a pull request and merge it)" >> "$GITHUB_OUTPUT"
           fi
 
-      # Opens the registration pull request in the platform repository, when the credentials exist.
-      # Without them (a personal account, or nobody has set them up) it does nothing and the summary
-      # prints the entry to add by hand. A failure here never fails the setup.
-      #   secret   PLATFORM_REPO_TOKEN : a token that can push a branch and open a PR in the platform repo
-      #                                  (an organization secret, or a GitHub App token)
-      #   variable PLATFORM_REPO       : owner/name of the platform repository
-      - name: Open the registration pull request
-        id: register
-        continue-on-error: true
-        env:
-          PLATFORM_REPO_TOKEN: ${{ secrets.PLATFORM_REPO_TOKEN }}
-          PLATFORM_REPO: ${{ vars.PLATFORM_REPO }}
-          NAME: ${{ inputs.name }}
-        run: |
-          set -euo pipefail
-          if [ -z "${PLATFORM_REPO_TOKEN:-}" ] || [ -z "${PLATFORM_REPO:-}" ]; then
-            echo "opened=false" >> "$GITHUB_OUTPUT"
-            echo "::notice::PLATFORM_REPO_TOKEN or PLATFORM_REPO is not set: the registration entry is printed in the summary instead"
-            exit 0
-          fi
-          export GH_TOKEN="$PLATFORM_REPO_TOKEN"
-          file="argocd/apps/services-appset.yaml"
-          gh repo clone "$PLATFORM_REPO" "${RUNNER_TEMP}/platform" -- --quiet
-          cd "${RUNNER_TEMP}/platform"
-          if yq -e '.spec.generators[].list.elements[] | select(.name == strenv(NAME))' "$file" > /dev/null 2>&1; then
-            echo "::error::a service named ${NAME} is already registered in ${PLATFORM_REPO}"
-            exit 1
-          fi
-          branch="register/${NAME}"
-          git checkout -q -b "$branch"
-          REPO_URL="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}" \
-            yq -i '(.spec.generators[] | select(has("list")) | .list.elements) += [{"name": strenv(NAME), "repoURL": strenv(REPO_URL), "revision": "main", "valuesPath": "deploy/service.yaml"}]' "$file"
-          git config user.name  "ci-bot"
-          git config user.email "ci-bot@users.noreply.github.com"
-          git commit -q -am "feat: register ${NAME}"
-          git push --force --quiet origin "$branch"
-          base=$(gh repo view "$PLATFORM_REPO" --json defaultBranchRef --jq .defaultBranchRef.name)
-          url=$(gh pr list --head "$branch" --state open --json url --jq '.[0].url // ""')
-          if [ -z "$url" ]; then
-            # A draft: the service has no image until its first release, and the platform
-            # would wait for one. The PR is marked ready, and merged, after that release.
-            url=$(gh pr create --draft --base "$base" --head "$branch" \
-              --title "feat: register ${NAME}" \
-              --body "Registers the service ${NAME} (${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}). Opened by its setup workflow as a draft. Mark it ready after the service's first release, then merge it: Argo CD deploys the service after the merge.")
-          fi
-          echo "opened=true" >> "$GITHUB_OUTPUT"
-          echo "url=${url}" >> "$GITHUB_OUTPUT"
-
       - name: Write the next steps
         env:
           NAME: ${{ inputs.name }}
           WHERE: ${{ steps.commit.outputs.where }}
-          OPENED: ${{ steps.register.outputs.opened }}
-          PR_URL: ${{ steps.register.outputs.url }}
-          REGISTER_OUTCOME: ${{ steps.register.outcome }}
         run: |
           {
             echo "## Service '${NAME}' is set up"
             echo
             echo "\`deploy/service.yaml\` was committed to ${WHERE}."
             echo
-            echo "### 1. Repository settings (run once, with the GitHub CLI)"
+            echo "Three steps remain. The workflow cannot do the first and the last: it has no right to change repository settings or to open a pull request in another repository."
             echo
-            echo "The workflow has no right to change repository settings. These two commands let the deploy workflow open and merge its release pull request. Without them the first release stops with a clear message."
+            echo "### 1. Repository settings (run once, with the GitHub CLI)"
             echo
             echo '```bash'
             echo "gh api -X PATCH repos/${GITHUB_REPOSITORY} -F allow_auto_merge=true -F delete_branch_on_merge=true"
             echo "gh api -X PUT repos/${GITHUB_REPOSITORY}/actions/permissions/workflow -F can_approve_pull_request_reviews=true"
             echo '```'
             echo
+            echo "These let the deploy workflow open and merge its release pull request. Without them the first release stops with a clear message."
+            echo
             echo "### 2. Push your application"
             echo
-            echo "Add your code and a \`Dockerfile\` at the repository root, and push to \`main\`. The deploy workflow builds, verifies and releases it."
+            echo "Add your code and a \`Dockerfile\` at the repository root, and push to \`main\`. The deploy workflow builds, verifies and releases it. Wait for the first release before step 3."
             echo
-            echo "### 3. Register the service with the platform, after the first release"
+            echo "### 3. Register the service with the platform"
             echo
-            if [ "${OPENED:-}" = "true" ]; then
-              echo "The registration pull request is open as a draft: ${PR_URL}"
-              echo "Mark it ready after the first release. The platform team reviews and merges it."
-            else
-              if [ "${REGISTER_OUTCOME:-}" = "failure" ]; then
-                echo "The automatic registration pull request failed (see the log of this run), so add the entry by hand."
-              else
-                echo "No credentials for the platform repository are set up, so add the entry by hand."
-              fi
-              echo "Add this entry to the list of services (\`spec.generators[].list.elements\`) in \`argocd/apps/services-appset.yaml\` of the platform repository and open a pull request. Do it after the first release: registered earlier, the platform would wait for an image that does not exist yet."
-              echo
-              echo '```yaml'
-              echo "- name: ${NAME}"
-              echo "  repoURL: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}"
-              echo "  revision: main"
-              echo "  valuesPath: deploy/service.yaml"
-              echo '```'
-            fi
+            echo "Do this after the first release: registered earlier, the platform would wait for an image that does not exist yet. Add this entry to the list of services (\`spec.generators[].list.elements\`) in \`argocd/apps/services-appset.yaml\` of the platform repository and open a pull request:"
+            echo
+            echo '```yaml'
+            echo "- name: ${NAME}"
+            echo "  repoURL: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}"
+            echo "  revision: main"
+            echo "  valuesPath: deploy/service.yaml"
+            echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
