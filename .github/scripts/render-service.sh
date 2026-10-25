@@ -14,12 +14,12 @@ fail() { echo "::error::$1"; exit 1; }
   || fail "name '$NAME' must start with a letter and contain only lowercase letters, digits and dashes (max 42 characters)"
 [[ "$IMAGE" =~ ^[a-z0-9./_-]+$ ]] \
   || fail "image '$IMAGE' must be lowercase (registry rule); letters, digits, '.', '/', '_' and '-' only"
-[[ "$PORT" =~ ^[0-9]+$ ]] && [ "$PORT" -ge 1 ] && [ "$PORT" -le 65535 ] \
+[[ "$PORT" =~ ^[1-9][0-9]{0,4}$ ]] && [ "$PORT" -le 65535 ] \
   || fail "port '$PORT' must be a number between 1 and 65535"
-[[ "$SERVICE_PATH" =~ ^/[a-z0-9/_-]*$ ]] \
-  || fail "path '$SERVICE_PATH' must start with / and use lowercase letters, digits, '/', '_' and '-'"
-[[ "$HEALTH" =~ ^/ ]] \
-  || fail "health '$HEALTH' must start with /"
+[[ "$SERVICE_PATH" =~ ^/([a-z0-9_-]+(/[a-z0-9_-]+)*)?$ ]] \
+  || fail "path '$SERVICE_PATH' must start with /, use lowercase letters, digits, '_' and '-', and not end with /"
+[[ "$HEALTH" =~ ^/[A-Za-z0-9/_.-]*$ ]] \
+  || fail "health '$HEALTH' must start with / and use letters, digits, '/', '_', '.' and '-'"
 [[ "$DATABASE" == "true" || "$DATABASE" == "false" ]] \
   || fail "database must be true or false"
 

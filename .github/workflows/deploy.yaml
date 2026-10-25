@@ -6,6 +6,10 @@
 # deploy/service.yaml.
 name: build-and-deploy
 
+# Least privilege by default: each job asks for what it needs.
+permissions:
+  contents: read
+
 on:
   workflow_dispatch:          # manual run on the default branch
   push:
@@ -26,6 +30,7 @@ jobs:
     if: ${{ !github.event.repository.is_template }}
     runs-on: ubuntu-latest
     outputs:
+      ready: ${{ steps.plan.outputs.ready }}
       components: ${{ steps.plan.outputs.components }}
     steps:
       - uses: actions/checkout@v4
@@ -33,10 +38,15 @@ jobs:
         name: Read the components from deploy/service.yaml
         run: |
           set -euo pipefail
+          # A new repository has no deploy/service.yaml until Setup service has run. That is not a
+          # failure: say what to do and skip the rest, so a fresh repository does not start red.
           if [ ! -f deploy/service.yaml ]; then
-            echo "::error::deploy/service.yaml is missing. Run the 'Setup service' workflow first."
-            exit 1
+            echo "::notice::deploy/service.yaml is missing. Run the 'Setup service' workflow, then push again."
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            echo "components=[]" >> "$GITHUB_OUTPUT"
+            exit 0
           fi
+          echo "ready=true" >> "$GITHUB_OUTPUT"
           count=$(yq '.components | length' deploy/service.yaml)
           # One component: Dockerfile and build context at the repository root.
           # Several: <component>/Dockerfile with the context in <component>/.
@@ -46,7 +56,10 @@ jobs:
           echo "Components: ${matrix}"
 
   test:
-    if: ${{ !github.event.repository.is_template }}
+    # Skipped (not failed) while there is no deploy/service.yaml, and in the template itself.
+    # build and deploy need this job, so they are skipped too.
+    needs: plan
+    if: ${{ needs.plan.outputs.ready == 'true' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -95,7 +108,7 @@ jobs:
     needs: [plan, build]
     # Only the default branch may deploy. Without this, anyone who can run this workflow on a
     # branch would ship that branch's build to main through the auto-merge.
-    if: github.event_name != 'pull_request' && github.ref_name == github.event.repository.default_branch
+    if: github.event_name != 'pull_request' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
     runs-on: ubuntu-latest
     permissions: {contents: write, pull-requests: write, packages: read}
     steps:
@@ -153,10 +166,14 @@ jobs:
           git config user.email "ci-bot@users.noreply.github.com"
           git checkout -b "$branch"
           git commit -am "chore(deploy): ${GITHUB_SHA::7}"
-          git push origin "$branch"
-          gh pr create --base "${GITHUB_REF_NAME}" --head "$branch" \
-            --title "chore(deploy): ${GITHUB_SHA::7}" \
-            --body "Image tags built from ${GITHUB_SHA}. Both images verified for linux/amd64 and linux/arm64. Merged automatically; Argo CD pulls the change. To roll back, revert this PR."
+          # A re-run after a partial run creates a new commit for the same branch name. The branch
+          # belongs to this job, so overwrite it.
+          git push --force origin "$branch"
+          if [ "$(gh pr list --head "$branch" --state open --json number --jq length)" = "0" ]; then
+            gh pr create --base "${GITHUB_REF_NAME}" --head "$branch" \
+              --title "chore(deploy): ${GITHUB_SHA::7}" \
+              --body "Image tags built from ${GITHUB_SHA}. Every image verified for linux/amd64 and linux/arm64. Merged automatically; Argo CD pulls the change. To roll back, revert this PR."
+          fi
 
           # A comment on the PR, where developers look: what changed, where to watch it, how to undo it.
           short=${GITHUB_SHA::7}
@@ -193,7 +210,13 @@ jobs:
           #   2. reviews required     -> merge queued until a reviewer approves (needs
           #                              "Allow auto-merge" in the repository settings)
           #   3. neither works        -> PR left open for a human; the job stays green
-          if gh pr merge "$branch" --squash --delete-branch; then
+          merged=false
+          for attempt in 1 2 3; do
+            # Mergeability is computed asynchronously, right after the PR is created.
+            if gh pr merge "$branch" --squash --delete-branch; then merged=true; break; fi
+            sleep 5
+          done
+          if [ "$merged" = true ]; then
             echo "merged $branch"
           elif gh pr merge "$branch" --squash --delete-branch --auto; then
             echo "::notice::merge queued for $branch: waiting for required reviews"
