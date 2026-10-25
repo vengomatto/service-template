@@ -1,0 +1,17 @@
+# Replaced by the Setup service workflow, which writes deploy/service.yaml and removes this file.
+# This is the only deployment file a team writes. The platform turns it into the namespace, the
+# network rules, the deployments, the ingress, the database and the smoke test.
+#
+# `tag` is the commit SHA of the image CI built; CI rewrites it in a deploy PR. Never edit it by hand.
+# `unreleased` means no image has been released yet.
+name: __NAME__
+host: __NAME__.localhost
+components:
+  app:
+    image: __IMAGE__
+    tag: unreleased
+    port: __PORT__
+    path: __PATH__
+    health: __HEALTH__
+database:
+  enabled: __DATABASE__

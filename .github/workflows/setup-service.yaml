@@ -1,0 +1,127 @@
+# Run once, from the Actions tab, right after "Use this template". It fills in deploy/service.yaml
+# and tells you the two steps it cannot do for you. A form, not a script on your laptop.
+name: setup-service
+
+on:
+  workflow_dispatch:
+    inputs:
+      name:
+        description: "Service name: lowercase letters, digits and dashes (for example orders)"
+        required: true
+        type: string
+      port:
+        description: "Port the application listens on"
+        required: true
+        default: "8080"
+        type: string
+      path:
+        description: "URL prefix: / for the whole site, /api for a sub-path"
+        required: true
+        default: "/"
+        type: string
+      health:
+        description: "Health check path that returns 200 when the app is ready"
+        required: true
+        default: "/"
+        type: string
+      database:
+        description: "Create a Postgres database for this service"
+        required: true
+        default: false
+        type: boolean
+      image:
+        description: "Image repository. Leave empty to use ghcr.io/<owner>/<repository>"
+        required: false
+        default: ""
+        type: string
+
+# Needed to commit deploy/service.yaml. Nothing more: this workflow cannot change repository
+# settings or touch other repositories.
+permissions:
+  contents: write
+
+jobs:
+  setup:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Refuse to run twice
+        run: |
+          if [ -f deploy/service.yaml ]; then
+            echo "::error::deploy/service.yaml already exists. To change it, edit the file in a pull request."
+            exit 1
+          fi
+
+      - name: Render deploy/service.yaml
+        env:
+          NAME: ${{ inputs.name }}
+          PORT: ${{ inputs.port }}
+          SERVICE_PATH: ${{ inputs.path }}
+          HEALTH: ${{ inputs.health }}
+          DATABASE: ${{ inputs.database }}
+          IMAGE_INPUT: ${{ inputs.image }}
+        run: |
+          set -euo pipefail
+          # GHCR image names must be lowercase; repository names may not be.
+          if [ -n "$IMAGE_INPUT" ]; then
+            IMAGE="$IMAGE_INPUT"
+          else
+            IMAGE="ghcr.io/${GITHUB_REPOSITORY,,}"
+          fi
+          export IMAGE
+          bash .github/scripts/render-service.sh
+
+      - name: Commit
+        id: commit
+        run: |
+          set -euo pipefail
+          git config user.name  "ci-bot"
+          git config user.email "ci-bot@users.noreply.github.com"
+          git rm -q deploy/service.template.yaml
+          git add deploy/service.yaml
+          git commit -q -m "chore: set up the service from the template"
+          # The default branch may refuse a direct push (review rules). Then use a branch.
+          if git push origin "HEAD:${GITHUB_REF_NAME}"; then
+            echo "where=the default branch" >> "$GITHUB_OUTPUT"
+          else
+            git push origin "HEAD:refs/heads/setup-service"
+            echo "where=the branch setup-service (open a pull request and merge it)" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Write the next steps
+        env:
+          NAME: ${{ inputs.name }}
+          WHERE: ${{ steps.commit.outputs.where }}
+        run: |
+          {
+            echo "## Service '${NAME}' is set up"
+            echo
+            echo "\`deploy/service.yaml\` was committed to ${WHERE}."
+            echo
+            echo "Two steps remain. The workflow cannot do them: it has no right to change repository settings or to open a pull request in another repository."
+            echo
+            echo "### 1. Repository settings (run once, with the GitHub CLI)"
+            echo
+            echo '```bash'
+            echo "gh api -X PATCH repos/${GITHUB_REPOSITORY} -F allow_auto_merge=true -F delete_branch_on_merge=true"
+            echo "gh api -X PUT repos/${GITHUB_REPOSITORY}/actions/permissions/workflow -F can_approve_pull_request_reviews=true"
+            echo '```'
+            echo
+            echo "These let the deploy workflow open and merge its release pull request. Without them the first release stops with a clear message."
+            echo
+            echo "### 2. Register the service with the platform"
+            echo
+            echo "Add this entry to the \`services\` list in \`argocd/apps/services-appset.yaml\` of the platform repository and open a pull request:"
+            echo
+            echo '```yaml'
+            echo "- name: ${NAME}"
+            echo "  repoURL: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}"
+            echo "  revision: main"
+            echo "  valuesPath: deploy/service.yaml"
+            echo '```'
+            echo
+            echo "### Then push your application"
+            echo
+            echo "Add your code and a \`Dockerfile\` at the repository root, and push to \`main\`. The deploy workflow builds, verifies and releases it."
+          } >> "$GITHUB_STEP_SUMMARY"
