@@ -28,19 +28,23 @@ Open the **Actions** tab, choose **setup-service**, click **Run workflow**, and 
 The workflow writes `deploy/service.yaml` and commits it. It checks every value and tells you what is
 wrong if one is not valid.
 
-### 3. Do the two steps it prints
+### 3. Apply the repository settings it prints
 
-The summary of the run lists two steps the workflow cannot do for you (it has no right to change
-repository settings or to touch other repositories):
-
-1. Run two `gh api` commands once, so the release workflow may open and merge its pull request.
-2. Add one entry for your service to the platform repository and open a pull request there.
+The summary of the run lists what the workflow cannot do for you: it has no right to change repository
+settings or to touch other repositories. First, two `gh api` commands, run once, so the release workflow may
+open and merge its pull request.
 
 ### 4. Push your application
 
 Add your code and a `Dockerfile` at the repository root, then push to `main`. The pipeline tests it, builds
-the image for amd64 and arm64, checks both, and releases it. After the platform has picked up the change,
-your service answers on its URL.
+the image for amd64 and arm64, checks that both exist, and releases it.
+
+### 5. Register the service with the platform
+
+After the first release, add one entry for your service to the platform repository and open a pull request
+there (the summary prints the entry). Register after the first release: registered earlier, the platform waits
+for an image that does not exist yet. Once the platform has picked up the change, your service answers on
+its URL.
 
 ---
 
@@ -50,7 +54,7 @@ your service answers on its URL.
 |---|---|
 | Tests | Runs `scripts/test.sh` if you have one (a warning appears if you do not) |
 | Build | Builds and publishes the image, tagged with the commit |
-| Verify | Checks that every image runs on amd64 and arm64 |
+| Verify | Checks that every image was built for amd64 and arm64 |
 | Release | Opens a pull request that changes the image tag in `deploy/service.yaml`, comments with what changed and how to roll back, and merges it |
 | Deploy | The platform notices the change and deploys it, then runs a smoke test |
 
